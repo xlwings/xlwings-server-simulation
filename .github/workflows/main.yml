@@ -1,0 +1,63 @@
+name: Build Pipeline
+
+on:
+  release:
+    types:
+      - created
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+    - uses: actions/checkout@v2
+    - name: Get Certificate
+      id: write_file
+      uses: timheuer/base64-to-file@2d34558844bc851d6a653f79b3720f44dc6bff53
+      with:
+        fileName: 'cert.p12'
+        encodedString: ${{ secrets.CODESIGN_CERTIFICATE }}
+    - name: Set PATH for signtool
+      shell: bash
+      run: echo "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22000.0\x64" >> $GITHUB_PATH
+      # Code sign Excel add-in (start)
+    - name: Download and unzip Microsoft Office Subject Interface Packages
+      if: github.event_name == 'release'
+      shell: bash
+      run: |
+        # Microsoft Office Subject Interface Packages for Digitally Signing VBA Projects: https://www.microsoft.com/en-us/download/details.aspx?id=56617
+        # NOTE: see README in officesips.exe: the whole stack needs to be x86, including signtool, regsvr32.exe and C++ Redistribution Runtime 2010
+        mkdir ./officesips
+        curl -L https://download.microsoft.com/download/F/B/4/FB46F8CA-6A6F-4CB0-B8F4-06BF3D44DA48/officesips.exe -o ./officesips.exe
+        7z x ./officesips.exe -o./officesips
+    - name: Install Microsoft Visual C++ Redistributable 2010
+      if: github.event_name == 'release'
+      run: |
+        # https://vcredist.com
+        # Must be 2010: https://stackoverflow.com/questions/60239192/signtool-exe-error-signersign-failed-2147220492-0x800403f4-when-signing-ex
+        Install-Module -Name VcRedist -Force
+        New-Item -Path .\VcRedist -ItemType Directory
+        $VcRedists = Get-VcList -Export Unsupported | Where-Object { $_.Release -eq "2010" -and $_.Architecture -eq "x86" }
+        Save-VcRedist -VcList $VcRedists -Path .\VcRedist
+        Install-VcRedist -VcList $VcRedists -Path .\VcRedist
+    - name: Register msosipx.dll
+      if: github.event_name == 'release'
+      run: |
+        # Make sure it uses the 32bit version of regsvr32.exe
+        C:\Windows\system32\regsvr32.exe officesips\msosipx.dll
+    - name: Sign Excel add-in
+      if: github.event_name == 'release'
+      run: |
+        # Office 365 supports three different signatures on VBA projects, which is the reason why OffSign.bat signs and verifies the files 3x
+        # Note that signtools is in ...\bin\x86
+        .\officesips\OffSign.bat "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22000.0\x86\" "sign /f ${{ steps.write_file.outputs.filePath }} /p ${{ secrets.CODESIGN_PASSWORD }} /tr http://timestamp.sectigo.com /td sha256 /fd SHA256" "verify /pa" ".\simulation.xlam"
+      # Code sign Excel add-in (end)
+    - name: Upload add-in to GH Release
+      id: upload-release-asset
+      uses: actions/upload-release-asset@v1.0.2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: simulation.xlsm
+        asset_name: simulation.xlsm
+        asset_content_type: application/zip
