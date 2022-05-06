@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: xlwings-remote-simulation
+    env: docker
+    region: ohio
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: XLWINGS_LICENSE_KEY
+        sync: false
