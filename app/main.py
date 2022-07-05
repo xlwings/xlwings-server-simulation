@@ -35,6 +35,7 @@ app.include_router(simulation.router)
 async def health():
     return {"status": "ok"}
 
+
 # Only required by Excel on the web
 app.add_middleware(
     CORSMiddleware,
